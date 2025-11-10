@@ -1,81 +1,114 @@
 import streamlit as st
-import pymysql
+import duckdb
 import pandas as pd
 from datetime import date
+from pathlib import Path
 
+# -------------------------------------------------
+# 0. 경로 설정 (현재 파일과 같은 폴더 기준)
+# -------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "madang.db"
+CSV_CUSTOMER = BASE_DIR / "Customer_madang.csv"
+CSV_BOOK = BASE_DIR / "Book_madang.csv"
+CSV_ORDERS = BASE_DIR / "Orders_madang.csv"
+
+
+# -------------------------------------------------
+# 1. DuckDB 연결
+# -------------------------------------------------
 def get_conn():
-    return pymysql.connect(
-        host='172.23.216.39',
-        port=3306,
-        user='wbuser',
-        password='1234',
-        db='madang',
-        charset='utf8mb4',
-        cursorclass=pymysql.cursors.DictCursor,
-        connect_timeout=5
-    )
+    # 파일이 없으면 폴더는 만들어둔다
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(database=str(DB_PATH), read_only=False)
+    return conn
 
+
+# -------------------------------------------------
+# 2. 테이블 없으면 CSV로부터 만들어주는 헬퍼
+# -------------------------------------------------
+def ensure_tables():
+    conn = get_conn()
+    existing = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
+
+    if "customer" not in {e.lower() for e in existing} and CSV_CUSTOMER.exists():
+        conn.execute(
+            f"CREATE TABLE Customer AS SELECT * FROM '{CSV_CUSTOMER.as_posix()}'"
+        )
+    if "book" not in {e.lower() for e in existing} and CSV_BOOK.exists():
+        conn.execute(
+            f"CREATE TABLE Book AS SELECT * FROM '{CSV_BOOK.as_posix()}'"
+        )
+    if "orders" not in {e.lower() for e in existing} and CSV_ORDERS.exists():
+        conn.execute(
+            f"CREATE TABLE Orders AS SELECT * FROM '{CSV_ORDERS.as_posix()}'"
+        )
+    conn.close()
+
+
+# -------------------------------------------------
+# 3. 공통 쿼리 함수 (MySQL 버전→DuckDB 버전)
+# -------------------------------------------------
 def select_query(sql, params=None):
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(sql, params or ())
-    rows = cur.fetchall()
+    if params:
+        df = conn.execute(sql, params).df()
+    else:
+        df = conn.execute(sql).df()
     conn.close()
-    return rows
+    return df.to_dict("records")
+
 
 def execute_query(sql, params=None):
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(sql, params or ())
-    conn.commit()
+    if params:
+        conn.execute(sql, params)
+    else:
+        conn.execute(sql)
     conn.close()
 
-st.set_page_config(page_title="Madang Manager", layout="wide")
+
+# 먼저 테이블이 있는지 확인해서 없으면 CSV로 만든다
+ensure_tables()
+
+
+# -------------------------------------------------
+# 4. Streamlit UI (기존 거 거의 그대로)
+# -------------------------------------------------
+st.set_page_config(page_title="Madang Manager (DuckDB)", layout="wide")
 
 st.markdown("""
     <style>
-    .main {
-        background-color: #f7faff;
-    }
-
-    h1 {
-        color: #1E3A8A;
-        font-weight: 700;
-    }
-
-    h2, h3, h4 {
-        color: #2563EB;
-        margin-top: 0.8rem;
-    }
-
+    .main { background-color: #f7faff; }
+    h1 { color: #1E3A8A; font-weight: 700; }
+    h2, h3, h4 { color: #2563EB; margin-top: 0.8rem; }
     .stDataFrame {
         border: 1px solid #e5e7eb;
         border-radius: 10px;
         background-color: #ffffff;
         box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
-
     div[data-testid="stButton"] button {
-        background-color: #2563EB;
-        color: white;
-        border-radius: 5px;
-        padding: 0.5rem 1rem;
-        border: none;
+        background-color: #2563EB; color: white; border-radius: 5px;
+        padding: 0.5rem 1rem; border: none;
     }
-
     div[data-testid="stButton"] button:hover {
-        background-color: #1E40AF;
-        color: #f0f0f0;
+        background-color: #1E40AF; color: #f0f0f0;
     }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("Madang Manager")
+st.title("Madang Manager (DuckDB)")
 
-info_col1, info_col2, info_col3 = st.columns(3)
+
+# -------------------------------------------------
+# 상단 메트릭
+# -------------------------------------------------
 cust_cnt = select_query("SELECT COUNT(*) AS c FROM Customer;")[0]["c"]
 book_cnt = select_query("SELECT COUNT(*) AS c FROM Book;")[0]["c"]
 order_cnt = select_query("SELECT COUNT(*) AS c FROM Orders;")[0]["c"]
+
+info_col1, info_col2, info_col3 = st.columns(3)
 info_col1.metric("고객 수", f"{cust_cnt}명")
 info_col2.metric("도서 수", f"{book_cnt}권")
 info_col3.metric("주문 수", f"{order_cnt}건")
@@ -84,11 +117,13 @@ tab_customer, tab_book, tab_orders, tab_view = st.tabs(
     ["고객", "도서", "주문", "고객별 주문"]
 )
 
+# -------------------------------------------------
+#  고객 탭
+# -------------------------------------------------
 with tab_customer:
     st.subheader("고객 목록")
     customers = select_query("SELECT custid, name, address, phone FROM Customer ORDER BY custid;")
-    df_cust = pd.DataFrame(customers)
-    st.dataframe(df_cust, use_container_width=True, height=280)
+    st.dataframe(pd.DataFrame(customers), use_container_width=True, height=280)
 
     st.markdown("#### 고객 추가")
     col_add1, col_add2, col_add3, col_add4 = st.columns([1.5, 2, 1.5, 0.8])
@@ -105,7 +140,7 @@ with tab_customer:
         row = select_query("SELECT COALESCE(MAX(custid), 0) AS m FROM Customer;")
         new_id = row[0]["m"] + 1
         execute_query(
-            "INSERT INTO Customer (custid, name, address, phone) VALUES (%s, %s, %s, %s);",
+            "INSERT INTO Customer (custid, name, address, phone) VALUES (?, ?, ?, ?);",
             (new_id, c_name, c_addr, c_phone)
         )
         st.success(f"신규 고객이 추가되었습니다. (ID: {new_id})")
@@ -133,7 +168,7 @@ with tab_customer:
         with col_btn1:
             if st.button("저장", use_container_width=True, key="cust_save_btn"):
                 execute_query(
-                    "UPDATE Customer SET name=%s, address=%s, phone=%s WHERE custid=%s;",
+                    "UPDATE Customer SET name=?, address=?, phone=? WHERE custid=?;",
                     (edit_name, edit_addr, edit_phone, sel["custid"])
                 )
                 st.success("고객 정보가 수정되었습니다.")
@@ -141,24 +176,26 @@ with tab_customer:
         with col_btn2:
             if st.button("🗑 삭제", use_container_width=True, key="cust_del_btn", type="secondary"):
                 cnt = select_query(
-                    "SELECT COUNT(*) AS c FROM Orders WHERE custid = %s;",
+                    "SELECT COUNT(*) AS c FROM Orders WHERE custid = ?;",
                     (sel["custid"],)
                 )[0]["c"]
                 if cnt > 0:
                     st.error("이 고객은 주문 내역이 있어서 삭제할 수 없습니다.")
                 else:
-                    execute_query("DELETE FROM Customer WHERE custid=%s;", (sel["custid"],))
+                    execute_query("DELETE FROM Customer WHERE custid=?;", (sel["custid"],))
                     st.success("고객이 삭제되었습니다.")
                     st.rerun()
     else:
         st.info("수정하거나 삭제할 고객을 선택하세요.")
 
 
+# -------------------------------------------------
+#  도서 탭
+# -------------------------------------------------
 with tab_book:
     st.subheader("도서 목록")
     books = select_query("SELECT bookid, bookname, publisher, price FROM Book ORDER BY bookid;")
-    df_book = pd.DataFrame(books)
-    st.dataframe(df_book, use_container_width=True, height=280)
+    st.dataframe(pd.DataFrame(books), use_container_width=True, height=280)
 
     st.markdown("#### 도서 추가")
     bcol1, bcol2, bcol3, bcol4 = st.columns([1.4, 1.4, 1, 0.8])
@@ -175,7 +212,7 @@ with tab_book:
         row = select_query("SELECT COALESCE(MAX(bookid), 0) AS m FROM Book;")
         new_bid = row[0]["m"] + 1
         execute_query(
-            "INSERT INTO Book (bookid, bookname, publisher, price) VALUES (%s, %s, %s, %s);",
+            "INSERT INTO Book (bookid, bookname, publisher, price) VALUES (?, ?, ?, ?);",
             (new_bid, b_name, b_pub, b_price)
         )
         st.success(f"새 도서가 추가되었습니다. (ID: {new_bid})")
@@ -204,7 +241,7 @@ with tab_book:
         with col_bbtn1:
             if st.button("저장", use_container_width=True, key="book_save_btn"):
                 execute_query(
-                    "UPDATE Book SET bookname=%s, publisher=%s, price=%s WHERE bookid=%s;",
+                    "UPDATE Book SET bookname=?, publisher=?, price=? WHERE bookid=?;",
                     (eb_name, eb_pub, eb_price, sb["bookid"])
                 )
                 st.success("도서 정보가 수정되었습니다.")
@@ -212,30 +249,33 @@ with tab_book:
         with col_bbtn2:
             if st.button("🗑 삭제", use_container_width=True, key="book_del_btn", type="secondary"):
                 cnt = select_query(
-                    "SELECT COUNT(*) AS c FROM Orders WHERE bookid = %s;",
+                    "SELECT COUNT(*) AS c FROM Orders WHERE bookid = ?;",
                     (sb["bookid"],)
                 )[0]["c"]
                 if cnt > 0:
                     st.error("이 도서는 주문 내역에 사용되어 삭제할 수 없습니다.")
                 else:
-                    execute_query("DELETE FROM Book WHERE bookid=%s;", (sb["bookid"],))
+                    execute_query("DELETE FROM Book WHERE bookid=?;", (sb["bookid"],))
                     st.success("도서가 삭제되었습니다.")
                     st.rerun()
     else:
         st.info("수정하거나 삭제할 도서를 선택하세요.")
 
 
+# -------------------------------------------------
+#  주문 탭
+# -------------------------------------------------
 with tab_orders:
     st.subheader("주문 목록")
     orders = select_query("""
-        SELECT o.orderid, o.custid, c.name AS customer, o.bookid, b.bookname, o.saleprice, o.orderdate
+        SELECT o.orderid, o.custid, c.name AS customer,
+               o.bookid, b.bookname, o.saleprice, o.orderdate
         FROM Orders o
         JOIN Customer c ON o.custid = c.custid
         JOIN Book b ON o.bookid = b.bookid
         ORDER BY o.orderid;
     """)
-    df_orders = pd.DataFrame(orders)
-    st.dataframe(df_orders, use_container_width=True, height=280)
+    st.dataframe(pd.DataFrame(orders), use_container_width=True, height=280)
 
     st.markdown("#### 주문 입력")
     custs = select_query("SELECT custid, name FROM Customer ORDER BY custid;")
@@ -255,7 +295,7 @@ with tab_orders:
         row = select_query("SELECT COALESCE(MAX(orderid), 0) AS m FROM Orders;")
         new_oid = row[0]["m"] + 1
         execute_query(
-            "INSERT INTO Orders (orderid, custid, bookid, saleprice, orderdate) VALUES (%s, %s, %s, %s, %s);",
+            "INSERT INTO Orders (orderid, custid, bookid, saleprice, orderdate) VALUES (?, ?, ?, ?, ?);",
             (new_oid, sel_cust["custid"], sel_book["bookid"], saleprice, orderdate)
         )
         st.success(f"주문이 입력되었습니다. (ID: {new_oid})")
@@ -266,13 +306,16 @@ with tab_orders:
     if order_ids:
         del_oid = st.selectbox("삭제할 주문", order_ids, key="order_delete_box")
         if st.button("선택 주문 삭제", key="order_del_btn", type="secondary"):
-            execute_query("DELETE FROM Orders WHERE orderid=%s;", (del_oid,))
+            execute_query("DELETE FROM Orders WHERE orderid=?;", (del_oid,))
             st.success("주문이 삭제되었습니다.")
             st.rerun()
     else:
         st.info("삭제할 주문이 없습니다.")
 
 
+# -------------------------------------------------
+#  고객별 주문 조회
+# -------------------------------------------------
 with tab_view:
     st.subheader("고객명으로 주문 조회")
     name_keyword = st.text_input("고객 이름을 입력하세요", key="search_name")
@@ -282,7 +325,7 @@ with tab_view:
             FROM Customer c
             JOIN Orders o ON c.custid = o.custid
             JOIN Book b ON o.bookid = b.bookid
-            WHERE c.name = %s
+            WHERE c.name = ?
             ORDER BY o.orderdate;
         """, (name_keyword,))
         if rows:
