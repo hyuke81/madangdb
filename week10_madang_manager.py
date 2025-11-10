@@ -4,9 +4,6 @@ import pandas as pd
 from datetime import date
 from pathlib import Path
 
-# -------------------------------------------------
-# 0. 경로 설정 (현재 파일과 같은 폴더 기준)
-# -------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "madang.db"
 CSV_CUSTOMER = BASE_DIR / "Customer_madang.csv"
@@ -14,41 +11,25 @@ CSV_BOOK = BASE_DIR / "Book_madang.csv"
 CSV_ORDERS = BASE_DIR / "Orders_madang.csv"
 
 
-# -------------------------------------------------
-# 1. DuckDB 연결
-# -------------------------------------------------
 def get_conn():
-    # 파일이 없으면 폴더는 만들어둔다
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = duckdb.connect(database=str(DB_PATH), read_only=False)
     return conn
 
 
-# -------------------------------------------------
-# 2. 테이블 없으면 CSV로부터 만들어주는 헬퍼
-# -------------------------------------------------
 def ensure_tables():
     conn = get_conn()
     existing = {r[0] for r in conn.execute("SHOW TABLES").fetchall()}
 
     if "customer" not in {e.lower() for e in existing} and CSV_CUSTOMER.exists():
-        conn.execute(
-            f"CREATE TABLE Customer AS SELECT * FROM '{CSV_CUSTOMER.as_posix()}'"
-        )
+        conn.execute(f"CREATE TABLE Customer AS SELECT * FROM '{CSV_CUSTOMER.as_posix()}'")
     if "book" not in {e.lower() for e in existing} and CSV_BOOK.exists():
-        conn.execute(
-            f"CREATE TABLE Book AS SELECT * FROM '{CSV_BOOK.as_posix()}'"
-        )
+        conn.execute(f"CREATE TABLE Book AS SELECT * FROM '{CSV_BOOK.as_posix()}'")
     if "orders" not in {e.lower() for e in existing} and CSV_ORDERS.exists():
-        conn.execute(
-            f"CREATE TABLE Orders AS SELECT * FROM '{CSV_ORDERS.as_posix()}'"
-        )
+        conn.execute(f"CREATE TABLE Orders AS SELECT * FROM '{CSV_ORDERS.as_posix()}'")
     conn.close()
 
 
-# -------------------------------------------------
-# 3. 공통 쿼리 함수 (MySQL 버전→DuckDB 버전)
-# -------------------------------------------------
 def select_query(sql, params=None):
     conn = get_conn()
     if params:
@@ -68,13 +49,8 @@ def execute_query(sql, params=None):
     conn.close()
 
 
-# 먼저 테이블이 있는지 확인해서 없으면 CSV로 만든다
 ensure_tables()
 
-
-# -------------------------------------------------
-# 4. Streamlit UI (기존 거 거의 그대로)
-# -------------------------------------------------
 st.set_page_config(page_title="Madang Manager (DuckDB)", layout="wide")
 
 st.markdown("""
@@ -100,10 +76,6 @@ st.markdown("""
 
 st.title("Madang Manager (DuckDB)")
 
-
-# -------------------------------------------------
-# 상단 메트릭
-# -------------------------------------------------
 cust_cnt = select_query("SELECT COUNT(*) AS c FROM Customer;")[0]["c"]
 book_cnt = select_query("SELECT COUNT(*) AS c FROM Book;")[0]["c"]
 order_cnt = select_query("SELECT COUNT(*) AS c FROM Orders;")[0]["c"]
@@ -117,9 +89,6 @@ tab_customer, tab_book, tab_orders, tab_view = st.tabs(
     ["고객", "도서", "주문", "고객별 주문"]
 )
 
-# -------------------------------------------------
-#  고객 탭
-# -------------------------------------------------
 with tab_customer:
     st.subheader("고객 목록")
     customers = select_query("SELECT custid, name, address, phone FROM Customer ORDER BY custid;")
@@ -188,10 +157,6 @@ with tab_customer:
     else:
         st.info("수정하거나 삭제할 고객을 선택하세요.")
 
-
-# -------------------------------------------------
-#  도서 탭
-# -------------------------------------------------
 with tab_book:
     st.subheader("도서 목록")
     books = select_query("SELECT bookid, bookname, publisher, price FROM Book ORDER BY bookid;")
@@ -261,10 +226,6 @@ with tab_book:
     else:
         st.info("수정하거나 삭제할 도서를 선택하세요.")
 
-
-# -------------------------------------------------
-#  주문 탭
-# -------------------------------------------------
 with tab_orders:
     st.subheader("주문 목록")
     orders = select_query("""
@@ -312,10 +273,6 @@ with tab_orders:
     else:
         st.info("삭제할 주문이 없습니다.")
 
-
-# -------------------------------------------------
-#  고객별 주문 조회
-# -------------------------------------------------
 with tab_view:
     st.subheader("고객명으로 주문 조회")
     name_keyword = st.text_input("고객 이름을 입력하세요", key="search_name")
