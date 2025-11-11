@@ -143,7 +143,7 @@ with tab_customer:
                 st.success("고객 정보가 수정되었습니다.")
                 st.rerun()
         with col_btn2:
-            if st.button("🗑 삭제", use_container_width=True, key="cust_del_btn", type="secondary"):
+            if st.button("삭제", use_container_width=True, key="cust_del_btn", type="secondary"):
                 cnt = select_query(
                     "SELECT COUNT(*) AS c FROM Orders WHERE custid = ?;",
                     (sel["custid"],)
@@ -212,7 +212,7 @@ with tab_book:
                 st.success("도서 정보가 수정되었습니다.")
                 st.rerun()
         with col_bbtn2:
-            if st.button("🗑 삭제", use_container_width=True, key="book_del_btn", type="secondary"):
+            if st.button("삭제", use_container_width=True, key="book_del_btn", type="secondary"):
                 cnt = select_query(
                     "SELECT COUNT(*) AS c FROM Orders WHERE bookid = ?;",
                     (sb["bookid"],)
@@ -291,3 +291,4 @@ with tab_view:
             st.info("해당 고객의 주문이 없습니다.")
     else:
         st.caption("조회할 고객 이름을 입력하면 주문 내역이 표시됩니다.")
+
